@@ -9,19 +9,14 @@ export interface ExtMethodProvider {
 
 import type {
   AddExtensionRequest,
+  ArchiveSessionRequest,
   CheckSecretRequest,
   CheckSecretResponse,
   DeleteSessionRequest,
-  ExportSessionRequest,
-  ExportSessionResponse,
   GetExtensionsRequest,
   GetExtensionsResponse,
-  GetSessionRequest,
-  GetSessionResponse,
   GetToolsRequest,
   GetToolsResponse,
-  ImportSessionRequest,
-  ImportSessionResponse,
   ListProvidersRequest,
   ListProvidersResponse,
   ReadConfigRequest,
@@ -31,6 +26,7 @@ import type {
   RemoveConfigRequest,
   RemoveExtensionRequest,
   RemoveSecretRequest,
+  UnarchiveSessionRequest,
   UpdateProviderRequest,
   UpdateProviderResponse,
   UpdateWorkingDirRequest,
@@ -39,11 +35,8 @@ import type {
 } from './types.gen.js';
 import {
   zCheckSecretResponse,
-  zExportSessionResponse,
   zGetExtensionsResponse,
-  zGetSessionResponse,
   zGetToolsResponse,
-  zImportSessionResponse,
   zListProvidersResponse,
   zReadConfigResponse,
   zReadResourceResponse,
@@ -77,27 +70,8 @@ export class GooseExtClient {
     await this.conn.extMethod("_goose/working_dir/update", params);
   }
 
-  async sessionGet(params: GetSessionRequest): Promise<GetSessionResponse> {
-    const raw = await this.conn.extMethod("session/get", params);
-    return zGetSessionResponse.parse(raw) as GetSessionResponse;
-  }
-
   async sessionDelete(params: DeleteSessionRequest): Promise<void> {
     await this.conn.extMethod("session/delete", params);
-  }
-
-  async GooseSessionExport(
-    params: ExportSessionRequest,
-  ): Promise<ExportSessionResponse> {
-    const raw = await this.conn.extMethod("_goose/session/export", params);
-    return zExportSessionResponse.parse(raw) as ExportSessionResponse;
-  }
-
-  async GooseSessionImport(
-    params: ImportSessionRequest,
-  ): Promise<ImportSessionResponse> {
-    const raw = await this.conn.extMethod("_goose/session/import", params);
-    return zImportSessionResponse.parse(raw) as ImportSessionResponse;
   }
 
   async GooseConfigExtensions(
@@ -152,5 +126,13 @@ export class GooseExtClient {
 
   async GooseSecretRemove(params: RemoveSecretRequest): Promise<void> {
     await this.conn.extMethod("_goose/secret/remove", params);
+  }
+
+  async GooseSessionArchive(params: ArchiveSessionRequest): Promise<void> {
+    await this.conn.extMethod("_goose/session/archive", params);
+  }
+
+  async GooseSessionUnarchive(params: UnarchiveSessionRequest): Promise<void> {
+    await this.conn.extMethod("_goose/session/unarchive", params);
   }
 }

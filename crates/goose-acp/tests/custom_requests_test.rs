@@ -66,34 +66,6 @@ fn mock_provider_factory() -> AcpProviderFactory {
 }
 
 #[test]
-fn test_custom_session_get() {
-    run_test(async {
-        let openai = OpenAiFixture::new(vec![], Arc::new(EnforceSessionId::default())).await;
-        let mut conn = AcpServerConnection::new(TestConnectionConfig::default(), openai).await;
-
-        let SessionData { session, .. } = conn.new_session().await.unwrap();
-        let session_id = session.session_id().0.clone();
-
-        let result = send_custom(
-            conn.cx(),
-            "session/get",
-            serde_json::json!({
-                "sessionId": session_id,
-            }),
-        )
-        .await;
-        assert!(result.is_ok(), "expected ok, got: {:?}", result);
-
-        let response = result.unwrap();
-        let returned_session = response.get("session").expect("missing 'session' field");
-        assert_eq!(
-            returned_session.get("id").and_then(|v| v.as_str()),
-            Some(session_id.as_ref())
-        );
-    });
-}
-
-#[test]
 fn test_custom_get_tools() {
     run_test(async {
         let openai = OpenAiFixture::new(vec![], Arc::new(EnforceSessionId::default())).await;
@@ -239,27 +211,6 @@ fn test_provider_switching_updates_session_state() {
 
         let response = send_custom(
             conn.cx(),
-            "session/get",
-            serde_json::json!({
-                "sessionId": session_id,
-            }),
-        )
-        .await
-        .expect("session/get should succeed");
-        let session_value = response.get("session").expect("missing session");
-        assert_eq!(
-            session_value.get("provider_name"),
-            Some(&serde_json::json!("anthropic"))
-        );
-        assert_eq!(
-            session_value
-                .get("model_config")
-                .and_then(|value| value.get("model_name")),
-            Some(&serde_json::json!("current"))
-        );
-
-        let response = send_custom(
-            conn.cx(),
             "_goose/session/provider/update",
             serde_json::json!({
                 "sessionId": session_id,
@@ -276,27 +227,6 @@ fn test_provider_switching_updates_session_state() {
         assert!(
             !config_options.is_empty(),
             "expected refreshed config options"
-        );
-
-        let response = send_custom(
-            conn.cx(),
-            "session/get",
-            serde_json::json!({
-                "sessionId": session_id,
-            }),
-        )
-        .await
-        .expect("session/get after provider update should succeed");
-        let session_value = response.get("session").expect("missing session");
-        assert_eq!(
-            session_value.get("provider_name"),
-            Some(&serde_json::json!("openai"))
-        );
-        assert_eq!(
-            session_value
-                .get("model_config")
-                .and_then(|value| value.get("model_name")),
-            Some(&serde_json::json!("o4-mini"))
         );
 
         let response = send_custom(
@@ -318,25 +248,6 @@ fn test_provider_switching_updates_session_state() {
                 .iter()
                 .any(|option| option.get("id") == Some(&serde_json::json!("provider"))),
             "missing provider config option after reset"
-        );
-
-        let response = send_custom(
-            conn.cx(),
-            "session/get",
-            serde_json::json!({
-                "sessionId": session_id,
-            }),
-        )
-        .await
-        .expect("session/get after provider reset should succeed");
-        let session_value = response.get("session").expect("missing session");
-        assert_eq!(
-            session_value.get("provider_name"),
-            Some(&serde_json::json!("goose"))
-        );
-        assert_eq!(
-            session_value.get("model_config"),
-            Some(&serde_json::Value::Null)
         );
     });
 }

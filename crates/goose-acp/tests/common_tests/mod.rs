@@ -64,7 +64,7 @@ pub async fn run_list_sessions<C: Connection>() {
             session.session_id().clone(),
             session.work_dir()
         )
-        .title("ACP Session".to_string())])
+        .title("New Chat".to_string())])
     );
 }
 
