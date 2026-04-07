@@ -5,6 +5,8 @@ authors:
     - codefromthecrypt
 ---
 
+![Goose in the ACP Agent Registry on JetBrains](header.png)
+
 The biggest shift in developer tooling over the last year wasn't the rise of agents. It was the rise of agent subscriptions. We stopped choosing LLM platforms and counting tokens. We started choosing an agent CLI and paying a flat monthly fee.
 
 That works until you realize each agent implies a specific frontend. Cursor is its own editor (a VS Code fork). Claude Code started as a terminal-only tool. Many agents only work well inside one specific environment. Even agents with broad IDE support, like Copilot, tie deeper features to their own ecosystem. If you want a different agent in your favorite editor, you're often out of luck.
@@ -90,4 +92,6 @@ Pick the UI you like. Pick the agent you like. They don't have to be the same th
   <meta property="twitter:domain" content="block.github.io/goose" />
   <meta name="twitter:title" content="How to Break Up with Your Agent" />
   <meta name="twitter:description" content="ACP lets you keep your favorite editor but swap the AI agent, or keep your agent but use it from any editor. Here's what actually works today in Goose." />
+  <meta property="og:image" content="https://block.github.io/goose/assets/images/header.png" />
+  <meta name="twitter:image" content="https://block.github.io/goose/assets/images/header.png" />
 </head>
