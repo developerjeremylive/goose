@@ -1217,6 +1217,125 @@ impl GooseAcpAgent {
         let loaded_mode = goose_session.goose_mode;
         let agent_session_id = SessionId::new(internal_session_id.clone());
 
+        // ── REPLAY MESSAGES FIRST ──
+        // Stream the thread's human-visible message history back to the client
+        // immediately, before the slow agent/provider/extension setup. The
+        // replay only needs the thread_manager (SQLite reads) so the UI gets
+        // messages while the agent is still booting.
+        let thread_messages = self
+            .thread_manager
+            .list_messages(&thread_id)
+            .await
+            .map_err(|e| {
+                sacp::Error::internal_error().data(format!("Failed to load thread messages: {}", e))
+            })?;
+
+        // Lightweight tool_requests map for the replay loop — we only need it
+        // so that handle_tool_response can extract file locations from the
+        // matching request. No GooseAcpSession required.
+        let mut replay_tool_requests =
+            HashMap::<String, goose::conversation::message::ToolRequest>::new();
+
+        for message in &thread_messages {
+            if !message.metadata.user_visible {
+                continue;
+            }
+
+            for content_item in &message.content {
+                match content_item {
+                    MessageContent::Text(text) => {
+                        let chunk = ContentChunk::new(ContentBlock::Text(TextContent::new(
+                            text.text.clone(),
+                        )));
+                        let update = match message.role {
+                            Role::User => SessionUpdate::UserMessageChunk(chunk),
+                            Role::Assistant => SessionUpdate::AgentMessageChunk(chunk),
+                        };
+                        cx.send_notification(SessionNotification::new(
+                            args.session_id.clone(),
+                            update,
+                        ))?;
+                    }
+                    MessageContent::ToolRequest(tool_request) => {
+                        // Replay-only: emit the ToolCall notification and
+                        // stash the request for location extraction, but
+                        // don't require a full GooseAcpSession.
+                        replay_tool_requests.insert(tool_request.id.clone(), tool_request.clone());
+
+                        let tool_name = match &tool_request.tool_call {
+                            Ok(tool_call) => tool_call.name.to_string(),
+                            Err(_) => "error".to_string(),
+                        };
+
+                        cx.send_notification(SessionNotification::new(
+                            args.session_id.clone(),
+                            SessionUpdate::ToolCall(
+                                ToolCall::new(
+                                    ToolCallId::new(tool_request.id.clone()),
+                                    format_tool_name(&tool_name),
+                                )
+                                .status(ToolCallStatus::Pending),
+                            ),
+                        ))?;
+                    }
+                    MessageContent::ToolResponse(tool_response) => {
+                        // Replay-only: emit the ToolCallUpdate notification,
+                        // using the stashed replay_tool_requests for location
+                        // extraction.
+                        let status = match &tool_response.tool_result {
+                            Ok(result) if result.is_error == Some(true) => ToolCallStatus::Failed,
+                            Ok(_) => ToolCallStatus::Completed,
+                            Err(_) => ToolCallStatus::Failed,
+                        };
+
+                        let mut fields = ToolCallUpdateFields::new().status(status);
+                        if !tool_response
+                            .tool_result
+                            .as_ref()
+                            .is_ok_and(|r| r.is_acp_aware())
+                        {
+                            let content = build_tool_call_content(&tool_response.tool_result);
+                            fields = fields.content(content);
+
+                            let locations = extract_locations_from_meta(tool_response)
+                                .unwrap_or_else(|| {
+                                    if let Some(tool_request) =
+                                        replay_tool_requests.get(&tool_response.id)
+                                    {
+                                        extract_tool_locations(tool_request, tool_response)
+                                    } else {
+                                        Vec::new()
+                                    }
+                                });
+                            if !locations.is_empty() {
+                                fields = fields.locations(locations);
+                            }
+                        }
+
+                        cx.send_notification(SessionNotification::new(
+                            args.session_id.clone(),
+                            SessionUpdate::ToolCallUpdate(ToolCallUpdate::new(
+                                ToolCallId::new(tool_response.id.clone()),
+                                fields,
+                            )),
+                        ))?;
+                    }
+                    MessageContent::Thinking(thinking) => {
+                        cx.send_notification(SessionNotification::new(
+                            args.session_id.clone(),
+                            SessionUpdate::AgentThoughtChunk(ContentChunk::new(
+                                ContentBlock::Text(TextContent::new(thinking.thinking.clone())),
+                            )),
+                        ))?;
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        // ── THEN SET UP THE AGENT (for future prompts) ──
+        // This is the slow path — MCP subprocess spawning, provider init, etc.
+        // The client already has all historical messages by this point.
         let agent = self
             .create_agent_for_session(Some(cx), Some(&agent_session_id), Some(loaded_mode))
             .await
@@ -1258,67 +1377,14 @@ impl GooseAcpAgent {
 
         let provider_selection = session_provider_selection(&goose_session).to_string();
 
-        let mut session = GooseAcpSession {
+        // Seed the session's tool_requests with the replay data so that any
+        // future prompt that references these tool calls still works.
+        let session = GooseAcpSession {
             agent,
             internal_session_id: internal_session_id.clone(),
-            tool_requests: HashMap::new(),
+            tool_requests: replay_tool_requests,
             cancel_token: None,
         };
-
-        // Stream the thread's human-visible message history back to the client.
-        let thread_messages = self
-            .thread_manager
-            .list_messages(&thread_id)
-            .await
-            .map_err(|e| {
-                sacp::Error::internal_error().data(format!("Failed to load thread messages: {}", e))
-            })?;
-
-        for message in &thread_messages {
-            if !message.metadata.user_visible {
-                continue;
-            }
-
-            for content_item in &message.content {
-                match content_item {
-                    MessageContent::Text(text) => {
-                        let chunk = ContentChunk::new(ContentBlock::Text(TextContent::new(
-                            text.text.clone(),
-                        )));
-                        let update = match message.role {
-                            Role::User => SessionUpdate::UserMessageChunk(chunk),
-                            Role::Assistant => SessionUpdate::AgentMessageChunk(chunk),
-                        };
-                        cx.send_notification(SessionNotification::new(
-                            args.session_id.clone(),
-                            update,
-                        ))?;
-                    }
-                    MessageContent::ToolRequest(tool_request) => {
-                        self.handle_tool_request(tool_request, &args.session_id, &mut session, cx)
-                            .await?;
-                    }
-                    MessageContent::ToolResponse(tool_response) => {
-                        self.handle_tool_response(
-                            tool_response,
-                            &args.session_id,
-                            &mut session,
-                            cx,
-                        )
-                        .await?;
-                    }
-                    MessageContent::Thinking(thinking) => {
-                        cx.send_notification(SessionNotification::new(
-                            args.session_id.clone(),
-                            SessionUpdate::AgentThoughtChunk(ContentChunk::new(
-                                ContentBlock::Text(TextContent::new(thinking.thinking.clone())),
-                            )),
-                        ))?;
-                    }
-                    _ => {}
-                }
-            }
-        }
 
         // Key by thread_id — the ACP session ID the client sees.
         let mut sessions = self.sessions.lock().await;
